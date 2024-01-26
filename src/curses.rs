@@ -8,10 +8,7 @@
 //! This is intentionally very bare bones and only implements the subset of curses functionality
 //! used by fish
 
-use crate::flog::categories::debug;
-use crate::FLOGF;
 use crate::common::ToCString;
-use self::sys::*;
 use std::ffi::{CStr, CString};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -38,73 +35,6 @@ pub fn term() -> Option<Arc<Term>> {
         .as_ref()
         .map(Arc::clone)
 }
-
-/// Convert a nul-terminated pointer, which must not be itself null, to a CString.
-fn ptr_to_cstr(ptr: *const libc::c_char) -> CString {
-    assert!(!ptr.is_null());
-    unsafe { CStr::from_ptr(ptr).to_owned() }
-}
-
-/// Convert a nul-terminated pointer to a CString, or None if the pointer is null.
-fn try_ptr_to_cstr(ptr: *const libc::c_char) -> Option<CString> {
-    if ptr.is_null() {
-        None
-    } else {
-        Some(ptr_to_cstr(ptr))
-    }
-}
-
-/// Private module exposing system curses ffi.
-mod sys {
-    pub const OK: i32 = 0;
-
-    /// tputs callback argument type and the callback type itself.
-    /// N.B. The C++ had a check for TPUTS_USES_INT_ARG for the first parameter of tputs
-    /// which was to support OpenIndiana, which used a char.
-    pub type tputs_arg = libc::c_int;
-    pub type putc_t = extern "C" fn(tputs_arg) -> libc::c_int;
-
-    extern "C" {
-        #[cfg(not(have_nc_cur_term))]
-        pub static mut cur_term: *const core::ffi::c_void;
-        #[cfg(have_nc_cur_term)]
-        pub fn _nc_cur_term() -> *const core::ffi::c_void;
-
-        /// setupterm(3) is a low-level call to begin doing any sort of `term.h`/`curses.h` work.
-        /// It's called internally by ncurses's `initscr()` and `newterm()`, but the C++ code called
-        /// it directly from [`initialize_curses_using_fallbacks()`].
-        pub fn setupterm(
-            term: *const libc::c_char,
-            filedes: libc::c_int,
-            errret: *mut libc::c_int,
-        ) -> libc::c_int;
-
-        /// Frees the `cur_term` TERMINAL  pointer.
-        pub fn del_curterm(term: *const core::ffi::c_void) -> libc::c_int;
-
-        /// Sets the `cur_term` TERMINAL  pointer.
-        pub fn set_curterm(term: *const core::ffi::c_void) -> *const core::ffi::c_void;
-
-        /// Checks for the presence of a termcap flag identified by the first two characters of
-        /// `id`.
-        pub fn tgetflag(id: *const libc::c_char) -> libc::c_int;
-
-        /// Checks for the presence and value of a number capability in the termcap/termconf
-        /// database. A return value of `-1` indicates not found.
-        pub fn tgetnum(id: *const libc::c_char) -> libc::c_int;
-
-        pub fn tgetstr(
-            id: *const libc::c_char,
-            area: *mut *mut libc::c_char,
-        ) -> *const libc::c_char;
-
-        pub fn tparm(str: *const libc::c_char, ...) -> *const libc::c_char;
-
-        pub fn tputs(str: *const libc::c_char, affcnt: libc::c_int, putc: putc_t) -> libc::c_int;
-    }
-}
-
-pub use sys::tputs_arg as TputsArg;
 
 /// The safe wrapper around curses functionality, initialized by a successful call to [`setup()`]
 /// and obtained thereafter by calls to [`term()`].
@@ -464,15 +394,6 @@ where
     }
 }
 
-/// Resets the curses `cur_term` TERMINAL pointer. Subsequent calls to [`curses::term()`](term())
-/// will return `None`.
-pub fn reset() {
-    let mut term = TERM.lock().expect("Mutex poisoned!");
-    if term.is_some() {
-        *term = None;
-    }
-}
-
 /// Return a nonempty String capability from termcap, or None if missing or empty.
 /// Panics if the given code string does not contain exactly two bytes.
 fn get_str_cap(db: &terminfo::Database, code: &str) -> Option<CString> {
@@ -498,17 +419,6 @@ fn get_flag_cap(db: &terminfo::Database, code: &str) -> bool {
     db.raw(code)
         .map(|cap| matches!(cap, terminfo::Value::True))
         .unwrap_or(false)
-}
-
-/// `code` is the two-digit termcap code. See termcap(5) for a reference.
-/// Panics if anything other than a two-ascii-character `code` is passed into the function.
-const fn to_cstr_code(code: &str) -> [libc::c_char; 3] {
-    use libc::c_char;
-    let code = code.as_bytes();
-    if code.len() != 2 {
-        panic!("Invalid termcap code provided");
-    }
-    [code[0] as c_char, code[1] as c_char, b'\0' as c_char]
 }
 
 /// Covers over tparm().
