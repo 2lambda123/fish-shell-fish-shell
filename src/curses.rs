@@ -524,11 +524,3 @@ pub fn tparm1(cap: &CStr, param1: i32) -> Option<CString> {
     let cap = cap.to_bytes();
     terminfo::expand!(cap; param1).ok().map(|x| x.to_cstring())
 }
-
-/// Wrapper over tputs.
-/// The caller is responsible for synchronization.
-pub fn tputs(str: &CStr, affcnt: libc::c_int, putc: sys::putc_t) -> libc::c_int {
-    let str_ptr = str.as_ptr() as *mut libc::c_char;
-    // Safety: we're trusting tputs here.
-    unsafe { sys::tputs(str_ptr, affcnt, putc) }
-}
